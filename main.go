@@ -39,7 +39,7 @@ func printHelp() {
 
 func parseConfig() (port string) {
 	flag.Usage = printHelp
-	outPort := flag.String("port", "", "Statsite udp port to connect to")
+	outAddress := flag.String("port", "", "Statsite udp port to connect to")
 	printV := flag.Bool("version", false, "Prints the version string")
 	flag.Parse()
 
@@ -48,21 +48,21 @@ func parseConfig() (port string) {
 		os.Exit(0)
 	}
 
-	return *outPort
+	return *outAddress
 }
 
 func main() {
-	outPort := parseConfig()
+	outAddress := parseConfig()
 
 	in := bufio.NewReader(os.Stdin)
 
-	if outPort == "" {
+	if outAddress == "" {
 		el.Println("No port was provided\n")
 		printHelp()
 		os.Exit(1)
 	}
 
-	udpAddr, err := net.ResolveUDPAddr("udp", "localhost:"+outPort)
+	udpAddr, err := net.ResolveUDPAddr("udp", outAddress)
 	if err != nil {
 		el.Fatal("Could not resolve address", err)
 	}
@@ -120,14 +120,19 @@ func sanitizeKey(s string) string {
 }
 
 // Take the entire json blob and find any key/value pairs whose value is number and formulate a stat entry
-func findNums(prefix string, kvs map[string]interface{}, out io.Writer) {
+func findNums(prefix string, tag string, kvs map[string]interface{}, out io.Writer) {
 	for k, v := range kvs {
 		vf, ok := v.(float64)
 		if !ok {
 			continue
 		}
 
-		_, err := fmt.Fprintf(out, "rsyslog.%v.%v:%d|g\n", prefix, sanitizeKey(k), int(vf))
+		var err error
+		if tag == "" {
+			_, err = fmt.Fprintf(out, "rsyslog.%v.%v:%d|g\n", prefix, sanitizeKey(k), int(vf))
+		} else {
+			_, err = fmt.Fprintf(out, "rsyslog.%v,tag1=%v,tag2=%v:%d|g\n", prefix, tag, sanitizeKey(k), int(vf))
+		}
 		if err != nil {
 			el.Println("Error while writing", err)
 		}
@@ -164,10 +169,10 @@ func parseMsg(msg []byte, out io.Writer) {
 	switch origin {
 	case "dynstats":
 		if vals, ok := values["values"].(map[string]interface{}); ok {
-			findNums("dynstats", vals, out)
+			findNums("dynstats", "", vals, out)
 		}
 	case "impstats":
-		findNums("resource_usage", values, out)
+		findNums("resource_usage", "", values, out)
 	default:
 		name, ok = values["name"].(string)
 		if !ok {
@@ -175,7 +180,9 @@ func parseMsg(msg []byte, out io.Writer) {
 			return
 		}
 
-		name = sanitizeKey(origin) + "." + sanitizeKey(name)
-		findNums(name, values, out)
+		//name = sanitizeKey(origin) + "." + sanitizeKey(name)
+		tag := sanitizeKey(name)
+		name = sanitizeKey(origin)
+		findNums(name, tag, values, out)
 	}
 }
